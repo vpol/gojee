@@ -112,6 +112,10 @@ var tokenPopMap = map[int]func(rune, string) bool{
 		case "*", "+", "-", "/":
 			return true
 		}
+		
+		if len(c) > 0 && string(c[0]) == ">" && string(r) != "=" {
+			return true
+		}
 
 		if len(c) >= 2 {
 			return true
