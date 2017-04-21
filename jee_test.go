@@ -15,6 +15,34 @@ type Test struct {
 
 var Tests = []Test{
 	Test{
+		exp:    `.big_negative > -100`,
+		result: `true`,
+	},
+	Test{
+		exp:    `.small_negative >= -100`,
+		result: `true`,
+	},
+	Test{
+		exp:    `.small_negative <= .int`,
+		result: `true`,
+	},
+	Test{
+		exp:    `.small_negative > .int`,
+		result: `false`,
+	},
+	Test{
+		exp:    `.small_negative <= .big_negative`,
+		result: `true`,
+	},
+	Test{
+		exp:    `.big_negative == .small_negative`,
+		result: `false`,
+	},
+	Test{
+		exp:    `.big_negative >= .small_negative`,
+		result: `true`,
+	},
+	Test{
 		exp:    `.int == 5`,
 		result: `true`,
 	},
