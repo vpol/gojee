@@ -121,5 +121,20 @@
         "purple",
         "red",
         "green"
-    ]
+    ],
+    "arrayBoolAll": [
+        true,
+        true,
+        true
+    ],
+    "arrayBoolAny": [
+        false,
+        true,
+        false
+    ],
+    "p_version": "1.021.00",
+    "n_version": "1.022.00",
+    "haskey": ["GB", "NO"],
+    "check_chance": 6252069,
+    "check_chance_1": 4967
 }

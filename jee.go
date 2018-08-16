@@ -1,6 +1,7 @@
 package jee
 
 import (
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,7 +113,7 @@ var tokenPopMap = map[int]func(rune, string) bool{
 		case "*", "+", "-", "/":
 			return true
 		}
-		
+
 		if len(c) > 0 && string(c[0]) == ">" && string(r) != "=" {
 			return true
 		}
@@ -660,6 +661,14 @@ var unaryFuncs = map[string]func(interface{}) (interface{}, error){
 
 		return math.Floor(f), nil
 	},
+	"$ceil": func(val interface{}) (interface{}, error) {
+		f, ok := val.(float64)
+		if !ok {
+			return nil, nil
+		}
+
+		return math.Ceil(f), nil
+	},
 	"$keys": func(val interface{}) (interface{}, error) {
 		var keyList []interface{}
 		m, ok := val.(map[string]interface{})
@@ -667,7 +676,7 @@ var unaryFuncs = map[string]func(interface{}) (interface{}, error){
 			return nil, nil
 		}
 
-		for k, _ := range m {
+		for k := range m {
 			keyList = append(keyList, k)
 		}
 
@@ -739,6 +748,57 @@ var unaryFuncs = map[string]func(interface{}) (interface{}, error){
 		}
 
 		return nil, nil
+	},
+	"$all": func(val interface{}) (interface{}, error) {
+		valsArray, ok := val.([]interface{})
+		if !ok {
+			return nil, nil
+		}
+
+		for _, v := range valsArray {
+			switch t := v.(type) {
+			case string:
+				l, err := strconv.ParseBool(t)
+				if err != nil {
+					return nil, nil
+				}
+				if l == false {
+					return false, nil
+				}
+			case bool:
+				if t == false {
+					return false, nil
+				}
+			}
+		}
+
+		return true, nil
+	},
+
+	"$any": func(val interface{}) (interface{}, error) {
+		valsArray, ok := val.([]interface{})
+		if !ok {
+			return nil, nil
+		}
+
+		for _, v := range valsArray {
+			switch t := v.(type) {
+			case string:
+				l, err := strconv.ParseBool(t)
+				if err != nil {
+					return nil, nil
+				}
+				if l {
+					return true, nil
+				}
+			case bool:
+				if t {
+					return true, nil
+				}
+			}
+		}
+
+		return false, nil
 	},
 }
 
@@ -812,6 +872,14 @@ var binaryFuncs = map[string]func(interface{}, interface{}) (interface{}, error)
 		}
 		return strings.Contains(sa, sb), nil
 	},
+	"$coalesce": func(a interface{}, b interface{}) (interface{}, error) {
+
+		if a.(float64) > 0 {
+			return a, nil
+		}
+
+		return b, nil
+	},
 	"$regex": func(a interface{}, b interface{}) (interface{}, error) {
 		sa, ok := a.(string)
 		if !ok {
@@ -825,10 +893,44 @@ var binaryFuncs = map[string]func(interface{}, interface{}) (interface{}, error)
 
 		return regexp.MatchString(sb, sa)
 	},
+	"$chance": func(a interface{}, b interface{}) (interface{}, error) {
+
+		f, ok := b.(float64)
+
+		if !ok {
+			return false, errors.New("wrong value")
+		}
+
+		var mod string
+
+		switch c := a.(type) {
+		case string:
+			mod = c
+		case float64:
+			mod = strconv.FormatFloat(c, 'f', -1, 64)
+		case int64:
+			mod = strconv.FormatInt(c, 10)
+		default:
+			mod = fmt.Sprintf("%v", c)
+		}
+
+		sum := sha1.New()
+		sum.Write([]byte(mod))
+		hashsum := sum.Sum(nil)
+
+		hashVal := func(bKey []byte) uint32 {
+			return (uint32(bKey[3]) << 24) |
+				(uint32(bKey[2]) << 16) |
+				(uint32(bKey[1]) << 8) |
+				(uint32(bKey[0]))
+		}(hashsum)
+
+		return float64(hashVal) <= math.MaxUint32*f, nil
+	},
 	"$has": func(a interface{}, b interface{}) (interface{}, error) {
 		s, ok := a.([]interface{})
 		if !ok {
-			return nil, nil
+			return false, nil
 		}
 
 		for _, e := range s {
@@ -855,6 +957,64 @@ var binaryFuncs = map[string]func(interface{}, interface{}) (interface{}, error)
 	},
 }
 
+var trinaryFuncs = map[string]func(interface{}, interface{}, interface{}) (interface{}, error){
+
+	"$bucket": func(a interface{}, b interface{}, c interface{}) (interface{}, error) {
+
+		buckets, ok := b.(float64)
+
+		if !ok {
+			return false, errors.New("wrong value")
+		}
+
+		bucketId, ok := c.(float64)
+
+		if !ok {
+			return false, errors.New("wrong value")
+		}
+
+		var mod string
+
+		switch d := a.(type) {
+		case string:
+			mod = d
+		case float64:
+			mod = strconv.FormatFloat(d, 'f', -1, 64)
+		case int64:
+			mod = strconv.FormatInt(d, 10)
+		default:
+			mod = fmt.Sprintf("%v", d)
+		}
+
+		sum := sha1.New()
+		sum.Write([]byte(mod))
+		hashsum := sum.Sum(nil)
+
+		hashVal := func(bKey []byte) uint32 {
+			return (uint32(bKey[3]) << 24) |
+				(uint32(bKey[2]) << 16) |
+				(uint32(bKey[1]) << 8) |
+				(uint32(bKey[0]))
+		}(hashsum)
+
+		getBucket := func(key uint64, numBuckets int) int {
+			var b int64 = -1
+			var j int64
+			for j < int64(numBuckets) {
+				b = j
+				key = key*2862933555777941757 + 1
+				j = int64(float64(b+1) *
+					(float64(int64(1)<<31) / float64((key>>33)+1)))
+			}
+			return int(b)
+		}
+
+		res := getBucket(uint64(hashVal), int(buckets))
+
+		return int(bucketId) == res, nil
+	},
+}
+
 func getKeyValues(t *TokenTree, input BMsg) (interface{}, error) {
 	s, ok := t.Value.(string)
 
@@ -876,7 +1036,7 @@ func getKeyValues(t *TokenTree, input BMsg) (interface{}, error) {
 		case K_START:
 			switch c := sub.Value.(type) {
 			case string:
-				for j, _ := range output {
+				for j := range output {
 					outputMap, ok := output[j].(map[string]interface{})
 					if !ok {
 						return nil, errors.New("could not assert to map")
@@ -885,7 +1045,7 @@ func getKeyValues(t *TokenTree, input BMsg) (interface{}, error) {
 					output[j] = outputMap[c]
 				}
 			case float64:
-				for j, _ := range output {
+				for j := range output {
 					outputSlice, ok := output[j].([]interface{})
 					if !ok {
 						return nil, errors.New("could not assert to slice")
@@ -900,7 +1060,7 @@ func getKeyValues(t *TokenTree, input BMsg) (interface{}, error) {
 			default:
 				accessed = true
 				var newOutput []interface{}
-				for j, _ := range output {
+				for j := range output {
 					arr, ok := output[j].([]interface{})
 					if !ok {
 						return nil, errors.New("could not assert to slice")
@@ -912,15 +1072,15 @@ func getKeyValues(t *TokenTree, input BMsg) (interface{}, error) {
 				output = newOutput
 			}
 		case KEY:
-			for j, _ := range output {
+			for j := range output {
 				outputMap, ok := output[j].(map[string]interface{})
 				if !ok {
-					errors.New("could not assert to map")
+					return nil, errors.New("could not assert to map")
 				}
 
 				subValue, ok := sub.Value.(string)
 				if !ok {
-					errors.New("invalid key for map")
+					return nil, errors.New("invalid key for map")
 				}
 				output[j] = outputMap[subValue]
 			}
@@ -982,6 +1142,18 @@ func Eval(t *TokenTree, msg BMsg) (interface{}, error) {
 			a, err := Eval(t.Tokens[0], msg)
 			if err != nil {
 				return nil, err
+			}
+
+			ba, ok := a.(bool)
+			if ok {
+
+				if tokenVal == "&&" && ba == false {
+					return false, nil
+				}
+
+				if tokenVal == "||" && ba == true {
+					return true, nil
+				}
 			}
 
 			b, err := Eval(t.Tokens[1], msg)
@@ -1109,6 +1281,29 @@ func Eval(t *TokenTree, msg BMsg) (interface{}, error) {
 			}
 
 			return binaryFuncs[tokenVal](a, b)
+		} else if len(t.Tokens) == 5 {
+
+			a, err := Eval(t.Tokens[0], msg)
+			if err != nil {
+				return nil, err
+			}
+
+			b, err := Eval(t.Tokens[2], msg)
+			if err != nil {
+				return nil, err
+			}
+
+			c, err := Eval(t.Tokens[4], msg)
+			if err != nil {
+				return nil, err
+			}
+
+			_, ok := trinaryFuncs[tokenVal]
+			if !ok {
+				return nil, errors.New(fmt.Sprintf("func does not exist or wrong num of arguments: %s", tokenVal))
+			}
+
+			return trinaryFuncs[tokenVal](a, b, c)
 		}
 		return nil, errors.New(fmt.Sprintf("func does not exist or wrong num of arguments: %s", tokenVal))
 	default:
@@ -1127,12 +1322,12 @@ func FmtTokens(tl []*Token) {
 }
 
 func FmtTokenTree(tree *TokenTree, d int) {
-	fmt.Printf("\n")
+	fmt.Print("\n")
 	for i := 0; i < d; i++ {
-		fmt.Printf("  ")
+		fmt.Print("  ")
 	}
 
-	fmt.Printf("[")
+	fmt.Print("[")
 	if tree.Type != ZERO {
 		fmt.Printf("%s ", IdentStr[tree.Type])
 	}
@@ -1141,5 +1336,5 @@ func FmtTokenTree(tree *TokenTree, d int) {
 	for _, t := range tree.Tokens {
 		FmtTokenTree(t, d)
 	}
-	fmt.Printf("]")
+	fmt.Print("]")
 }
